@@ -232,6 +232,17 @@ std::set<K> keys(std::map<K, V> const& _map)
 	return applyMap(_map, [](auto const& _elem) { return _elem.first; }, std::set<K>{});
 }
 
+/// @returns a pointer to the entry of @a _map at @a _key, if there is one, and nullptr otherwise.
+template<typename MapType, typename KeyType>
+auto fetchValue(MapType&& _map, KeyType const& _key)
+{
+	auto it = _map.find(_key);
+	if (it == _map.end())
+		return static_cast<decltype(&it->second)>(nullptr);
+	else
+		return &it->second;
+}
+
 // String conversion functions, mainly to/from hex/nibble/byte representations.
 
 enum class WhenError
