@@ -9,6 +9,7 @@ Compiler Features:
  * SMTChecker: Support ABI functions as uninterpreted functions.
  * SMTChecker: Use checked arithmetic by default and support ``unchecked`` blocks.
  * SMTChecker: Show contract name in counterexample function call.
+ * Yul Optimizer: If all cases of a ``switch`` statement start with the same prefix, move it out of the ``switch``.
 
 Bugfixes:
  * Code Generator: Fix length check when decoding malformed error data in catch clause.
