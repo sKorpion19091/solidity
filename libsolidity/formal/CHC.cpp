@@ -635,6 +635,7 @@ void CHC::externalFunctionCall(FunctionCall const& _funCall)
 	bool usesStaticCall = kind == FunctionType::Kind::BareStaticCall ||
 		function->stateMutability() == StateMutability::Pure ||
 		function->stateMutability() == StateMutability::View;
+
 	if (!usesStaticCall)
 	{
 		state().newState();
@@ -642,13 +643,23 @@ void CHC::externalFunctionCall(FunctionCall const& _funCall)
 			m_context.variable(*var)->increaseIndex();
 	}
 
-	auto postCallState = vector<smtutil::Expression>{state().state()} + currentStateVariables();
 	auto error = errorFlag().increaseIndex();
+
+	Predicate const& callPredicate = *createSymbolicBlock(
+		nondetInterfaceSort(*m_currentContract, state()),
+		"nondet_call_" + uniquePrefix(),
+		PredicateType::ExternalCallUntrusted,
+		&_funCall
+	);
+	auto postCallState = vector<smtutil::Expression>{state().state()} + currentStateVariables();
 	vector<smtutil::Expression> stateExprs{error, state().thisAddress(), state().abi(), state().crypto()};
+
 	auto nondet = (*m_nondetInterfaces.at(m_currentContract))(stateExprs + preCallState + postCallState);
-	// TODO this could instead add the summary of the called function, where that summary
-	// basically has the nondet interface of this summary as a constraint.
-	m_context.addAssertion(nondet);
+	auto nondetCall = callPredicate(stateExprs + preCallState + postCallState);
+
+	addRule(smtutil::Expression::implies(nondet, nondetCall), nondetCall.name);
+
+	m_context.addAssertion(nondetCall);
 	solAssert(m_errorDest, "");
 	connectBlocks(m_currentBlock, predicate(*m_errorDest), errorFlag().currentValue() > 0);
 	// To capture the possibility of a reentrant call, we record in the call graph that the  current function
@@ -1138,7 +1149,8 @@ smtutil::Expression CHC::predicate(Predicate const& _block)
 		return constructor(_block, m_context);
 	case PredicateType::FunctionSummary:
 	case PredicateType::InternalCall:
-	case PredicateType::ExternalCall:
+	case PredicateType::ExternalCallTrusted:
+	case PredicateType::ExternalCallUntrusted:
 		return smt::function(_block, m_currentContract, m_context);
 	case PredicateType::FunctionBlock:
 		solAssert(m_currentFunction, "");
@@ -1215,7 +1227,7 @@ smtutil::Expression CHC::predicate(FunctionCall const& _funCall)
 	Predicate const& callPredicate = *createSummaryBlock(
 		*function,
 		*calledContract,
-		kind == FunctionType::Kind::Internal ? PredicateType::InternalCall : PredicateType::ExternalCall
+		kind == FunctionType::Kind::Internal ? PredicateType::InternalCall : PredicateType::ExternalCallTrusted
 	);
 	auto to = smt::function(callPredicate, calledContract, m_context);
 	addRule(smtutil::Expression::implies(from, to), to.name);
@@ -1529,8 +1541,10 @@ optional<string> CHC::generateCounterexample(CHCSolverInterface::CexGraph const&
 			calls.push_front(string(depth * 2, ' ') + pred->formatSummaryCall(nodeArgs(node)));
 			if (pred->isInternalCall())
 				calls.front() += " -- internal call";
-			else if (pred->isExternalCall())
-				calls.front() += " -- external call";
+			else if (pred->isExternalCallTrusted())
+				calls.front() += " -- trusted external call";
+			else if (pred->isExternalCallUntrusted())
+				calls.front() += " -- untrusted external call, synthesized as:";
 		};
 		dfs(summaryId, 0, dfs);
 		path.emplace_back(boost::algorithm::join(calls, "\n"));
@@ -1555,7 +1569,8 @@ map<unsigned, vector<unsigned>> CHC::summaryCalls(CHCSolverInterface::CexGraph c
 		q.pop();
 
 		Predicate const* nodePred = Predicate::predicate(_graph.nodes.at(node).name);
-		if (nodePred->isSummary() && (_root == root || nodePred->isInternalCall() || nodePred->isExternalCall()))
+		Predicate const* rootPred = Predicate::predicate(_graph.nodes.at(root).name);
+		if (nodePred->isSummary() && (_root == root || nodePred->isInternalCall() || nodePred->isExternalCallTrusted() || nodePred->isExternalCallUntrusted() || rootPred->isExternalCallUntrusted()))
 		{
 			calls[root].push_back(node);
 			root = node;
